@@ -23,10 +23,16 @@ def build_agent() -> Agent:
 
     The model id and region come from ``config.py`` so a reader can swap them
     in one place.
+
+    ``callback_handler=None`` disables Strands' built-in handler, which would
+    otherwise stream the model's text to stdout as it generates. The REPL
+    prints the final result itself, so without this we'd print every response
+    twice.
     """
     model = BedrockModel(model_id=MODEL_ID, region_name=REGION)
     return Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
         tools=NOTE_TOOLS,
+        callback_handler=None,
     )
