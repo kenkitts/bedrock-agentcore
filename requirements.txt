@@ -1,0 +1,5 @@
+# Post 1 (local) dependencies.
+# Pinned loosely to minor versions; run `pip install -U` and re-pin per post.
+# Later posts add: bedrock-agentcore (Runtime/Memory SDK) and dev deps.
+strands-agents>=0.1.0
+boto3>=1.35.0

@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Env / secrets
+.env
+*.local
+
+# AgentCore / build artifacts
+.agentcore/
+agentcore.json.bak
+dist/
+build/
