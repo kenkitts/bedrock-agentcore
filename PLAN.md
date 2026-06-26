@@ -68,7 +68,7 @@ Every post follows this 9-part anatomy:
 
 ### Post 2 — Runtime: Deploy to the Cloud
 - **Primitive:** AgentCore Runtime.
-- **Agent gains:** cloud hosting — same agent, now deployed via `agentcore launch`.
+- **Agent gains:** cloud hosting — same agent, now deployed via the AgentCore CLI BYO flow (`agentcore deploy`).
 - **Learning objective:** packaging/containerizing an agent and serverless agent hosting.
 - **Load-bearing section:** *How AgentCore does it* + *Under the hood* (ECR/container, the harness).
 
@@ -152,12 +152,20 @@ bedrock-agentcore/
   PLAN.md                 # this file
   POST_TEMPLATE.md        # the 9-part anatomy
   README.md               # series intro + table: post -> tag -> what's new
-  src/                    # the evolving agent (single source of truth)
-  config.py               # MODEL_ID + REGION (us-east-1) isolated here
+  app.py                  # AgentCore Runtime entrypoint (added in Post 2)
+  notes_agent/            # the evolving agent package (single source of truth)
+    config.py             #   MODEL_ID + REGION (us-east-1) isolated here
+    agent.py tools.py main.py __init__.py
+  requirements.txt        # deps; no `-e .` — package imports by co-location
+  pyproject.toml
   tests/                  # deterministic unit tests (from Post 4 onward)
   scripts/teardown_*.sh   # per-post teardown
   appendix/cdk/           # "productionizing with CDK" appendix
 ```
+
+- The package sits at the **repo root** (not `src/`). Post 1 used a `src/` layout;
+  Post 2 flattened it so the entrypoint imports `notes_agent` by co-location, with no
+  install step — which is what makes it import cleanly inside the Runtime container.
 
 - **Tags:** `post-01-foundations`, `post-02-runtime`, … `post-07-observability`.
 - Each post links its cumulative tag and the diff from the previous tag (the diff *is* the lesson).
@@ -172,7 +180,7 @@ bedrock-agentcore/
 
 ## Build Sequence (authoring order)
 
-1. Scaffold repo: `README.md`, `POST_TEMPLATE.md`, `config.py`, `src/`, `tests/`, `scripts/`.
+1. Scaffold repo: `README.md`, `POST_TEMPLATE.md`, `notes_agent/` (package with `config.py`), `tests/`, `scripts/`.
 2. Build Post 1 agent locally (Strands + Bedrock), tag `post-01-foundations`.
 3. Verify model access in `us-east-1`; confirm current Claude model ID.
 4. For each subsequent post: implement the new capability as a diff, add per-post
