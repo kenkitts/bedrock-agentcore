@@ -27,7 +27,7 @@ Each post links its cumulative tag and the **diff from the previous tag** — th
 ## Repo conventions
 
 - **One repo, one git tag per post.** `git checkout post-03-memory` gives you the agent at that stage.
-- **Config is centralized** in [`src/notes_agent/config.py`](src/notes_agent/config.py): `MODEL_ID` and `REGION` live there so a reader can swap them in one place.
+- **Config is centralized** in [`notes_agent/config.py`](notes_agent/config.py): `MODEL_ID` and `REGION` live there so a reader can swap them in one place.
 - **Region:** `us-east-1` throughout (broadest AgentCore + Bedrock availability).
 - **Cost:** every post has a "Prerequisites + cost" callout and a "Clean up" step. AgentCore is consumption-priced — idle resources cost little but non-zero.
 

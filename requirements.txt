@@ -1,13 +1,13 @@
 # Post 2 (Runtime) dependencies.
 # Pinned loosely to minor versions; run `pip install -U` and re-pin per post.
+#
+# Note: no `-e .` here. The notes_agent package lives at the repo root next to
+# app.py, so it imports by co-location (the entrypoint's directory is on the
+# import path) both locally and inside the deployed Runtime container — no
+# install step required.
 strands-agents>=0.1.0
 boto3>=1.35.0
 
 # AgentCore Runtime SDK: provides BedrockAgentCoreApp / @app.entrypoint, the
 # HTTP server the Runtime hosts. Added in Post 2.
 bedrock-agentcore>=0.1.0
-
-# Install the notes_agent package itself (src/ layout). Without this, the
-# package isn't importable and `python -m notes_agent.main` fails with
-# ModuleNotFoundError. Requires running from the repo root.
--e .
