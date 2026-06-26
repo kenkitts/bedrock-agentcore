@@ -46,4 +46,32 @@ pip install -r requirements.txt
 python -m notes_agent.main        # interactive local REPL
 ```
 
+## Post 2 (Runtime): run in the cloud
+
+The agent is unchanged; `app.py` wraps it in an AgentCore Runtime entrypoint.
+
+Test the Runtime server locally first (starts `POST /invocations` on :8080):
+
+```bash
+python app.py                     # or: agentcore dev   (hot reload)
+```
+
+Deploy and invoke with the [AgentCore CLI](https://github.com/aws/agentcore-cli):
+
+```bash
+npm install -g @aws/agentcore
+agentcore create --name notes-agent --no-agent
+agentcore add agent --name notesAgent --type byo \
+    --code-location . --entrypoint app.py --language Python
+agentcore deploy -y
+agentcore invoke "remember that runtime is post 2"
+agentcore logs --follow           # watch it run
+```
+
+Clean up when done (see the per-post teardown note below):
+
+```bash
+scripts/teardown_02_runtime.sh
+```
+
 See [`PLAN.md`](PLAN.md) for the full series design and [`POST_TEMPLATE.md`](POST_TEMPLATE.md) for the post structure.
