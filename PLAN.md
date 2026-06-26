@@ -74,9 +74,46 @@ Every post follows this 9-part anatomy:
 
 ### Post 3 — Memory: Short- and Long-Term
 - **Primitive:** AgentCore Memory.
-- **Agent gains:** remembers the conversation, then remembers preferences/facts across sessions.
-- **Learning objective:** short-term vs. long-term memory; how memory is stored/retrieved.
-- **Load-bearing section:** *Build it* (wiring memory) + *Run* (show it remembering).
+- **Agent gains:** durable conversation memory, then preferences/facts that persist *across* sessions.
+- **Learning objective:** short-term vs. long-term memory; how memory is stored/retrieved — and
+  crucially, why it's different from the free session continuity Runtime already gives you.
+- **Load-bearing section:** *Build it* (wiring memory) + *Run* (show it remembering across sessions).
+
+- **Framing — acknowledge session affinity first (don't get caught overselling):**
+  Runtime already gives ephemeral conversation continuity *for free*. Each session = a dedicated
+  microVM; reusing the session ID (`agentcore invoke --session-id <id>`; HTTP header
+  `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id`) sticks requests to the same warm microVM, so our
+  module-global Strands `Agent` keeps the transcript in memory and the agent "remembers" the
+  conversation. This is **not** AgentCore Memory — it's microVM stickiness, and it has hard limits:
+  - **Ephemeral:** in-memory state is wiped when the microVM stops; memory is sanitized.
+  - **Time-bounded:** session goes Idle→Stopped after ~15 min idle (default) or 8 h max lifetime;
+    the next invoke gets a fresh, empty microVM.
+  - **Single-session / single-instance:** nothing shared across different session IDs or users.
+  Open Post 3 by showing this trick, then **break it** (let the session idle out / use a fresh
+  session ID / force a cold start) so the recall vanishes — that failure motivates Memory.
+
+- **What Memory adds (the actual scope):**
+  - **Short-term memory** = *durable* conversation/event storage keyed by actor/session that
+    survives microVM recycling and cold starts. Frame as "the robust version of what stickiness
+    fakes," not "memory from nothing."
+  - **Long-term memory** = the headline. Extract + persist facts/preferences/summaries *across*
+    sessions (strategies: `SEMANTIC`, `SUMMARIZATION`, `USER_PREFERENCE`, `EPISODIC`) so the agent
+    remembers *you* in a brand-new session next week. Session affinity can never do this.
+
+- **Scope boundary (two different "memories"):** Post 3 is about the agent's
+  *conversation/preference* memory (the dialogue context and what it learns about you). The notes
+  `_STORE` (application data) becoming durable behind a real API is **Post 4 (Gateway)**, not here.
+  Don't imply Post 3 fixes the disappearing notes — it fixes the disappearing *conversation*.
+
+- **Demo design:** both lessons need ≥2 sessions. Short-term: show retained context across a
+  cold start / new session that affinity couldn't cover. Long-term: a brand-new session recalling
+  a preference stated in a prior one. Plan the transcript around two sessions.
+
+- **Open decision (wiring fork):** turn on Memory via the CLI deploy flag
+  (`--memory shortTerm` → `longAndShortTerm`, or `agentcore add memory --strategies ...`) **vs.**
+  wire it in-code by swapping Strands' default conversation manager for an AgentCore
+  Memory-backed one. PLAN decision #8 leans "in-code SDK for Memory/Gateway/Identity," but the CLI
+  now supports Memory as a first-class resource — decide at drafting time and note the tradeoff.
 
 ### Post 4 — Gateway: Tools as a Service
 - **Primitive:** AgentCore Gateway.
