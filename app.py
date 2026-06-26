@@ -9,11 +9,16 @@ the agent can run in the cloud instead of a terminal on your laptop.
 Locally, ``python app.py`` starts that same server so you can test before you
 deploy.
 
-Deploy with the AgentCore CLI (``npm install -g @aws/agentcore``):
+Deploy with the AgentCore CLI (``npm install -g @aws/agentcore``). The CLI is
+project-oriented, so create a sibling deploy project that points back at this
+repo (bring-your-own-code):
 
-    agentcore create --name notes-agent --no-agent
+    cd ..
+    agentcore create --project-name notesAgentRuntime --no-agent
+    cd notesAgentRuntime
     agentcore add agent --name notesAgent --type byo \
-        --code-location . --entrypoint app.py --language Python
+        --framework Strands --model-provider Bedrock --memory none \
+        --code-location ../bedrock-agentcore --entrypoint app.py --language Python
     agentcore deploy -y
     agentcore invoke "remember that runtime is post 2"
 """
