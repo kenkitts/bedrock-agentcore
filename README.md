@@ -56,22 +56,35 @@ Test the Runtime server locally first (starts `POST /invocations` on :8080):
 python app.py                     # or: agentcore dev   (hot reload)
 ```
 
-Deploy and invoke with the [AgentCore CLI](https://github.com/aws/agentcore-cli):
+Deploy with the [AgentCore CLI](https://github.com/aws/agentcore-cli). The CLI
+is project-oriented and scaffolds its own directory, so we create a small
+*deployment* project **next to** the repo that points back at our code (BYO).
+Keeping it as a sibling (not inside the repo) means `--code-location` doesn't
+try to package itself.
 
 ```bash
 npm install -g @aws/agentcore
-agentcore create --name notes-agent --no-agent
+
+# Create the deploy project alongside the repo (alphanumeric name, no hyphens).
+cd ..
+agentcore create --project-name notesAgentRuntime --no-agent
+cd notesAgentRuntime
+
+# Register THIS repo's app.py as a bring-your-own-code agent.
 agentcore add agent --name notesAgent --type byo \
-    --code-location . --entrypoint app.py --language Python
+    --framework Strands --model-provider Bedrock --memory none \
+    --code-location ../bedrock-agentcore --entrypoint app.py --language Python
+
 agentcore deploy -y
 agentcore invoke "remember that runtime is post 2"
 agentcore logs --follow           # watch it run
 ```
 
-Clean up when done (see the per-post teardown note below):
+Clean up when done — run the teardown from inside the deploy project:
 
 ```bash
-scripts/teardown_02_runtime.sh
+cd ../notesAgentRuntime
+~/bedrock-agentcore/scripts/teardown_02_runtime.sh
 ```
 
 See [`PLAN.md`](PLAN.md) for the full series design and [`POST_TEMPLATE.md`](POST_TEMPLATE.md) for the post structure.
