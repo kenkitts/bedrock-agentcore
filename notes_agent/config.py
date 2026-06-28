@@ -22,3 +22,18 @@ MODEL_ID = os.environ.get(
     "MODEL_ID",
     "us.anthropic.claude-sonnet-4-6",
 )
+
+
+# --- Post 3 (Memory) -------------------------------------------------------
+
+# AgentCore Memory resource id. Create the resource ONCE with
+#   python scripts/create_memory.py
+# and paste the printed id here as the default (it then ships with the bundled
+# code into the Runtime container, since the AgentCore CLI has no way to inject
+# env vars). For local runs you can instead export NOTES_AGENT_MEMORY_ID.
+# Leave empty to run the memoryless Post 1/2 agent.
+MEMORY_ID = os.environ.get("NOTES_AGENT_MEMORY_ID", "")
+
+# Who the long-term memories belong to. Real per-user identity arrives in
+# Post 5 (Identity); until then a single demo actor scopes all memory.
+ACTOR_ID = os.environ.get("NOTES_AGENT_ACTOR_ID", "demo-user")

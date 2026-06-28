@@ -1,4 +1,4 @@
-# Post 2 (Runtime) dependencies.
+# Post 3 (Memory) dependencies.
 # Pinned loosely to minor versions; run `pip install -U` and re-pin per post.
 #
 # Note: no `-e .` here. The notes_agent package lives at the repo root next to
@@ -8,6 +8,8 @@
 strands-agents>=0.1.0
 boto3>=1.35.0
 
-# AgentCore Runtime SDK: provides BedrockAgentCoreApp / @app.entrypoint, the
-# HTTP server the Runtime hosts. Added in Post 2.
-bedrock-agentcore>=0.1.0
+# AgentCore SDK. Post 2 used this for BedrockAgentCoreApp / @app.entrypoint (the
+# HTTP server the Runtime hosts). Post 3 adds the [strands-agents] extra, which
+# pulls in the AgentCore Memory <-> Strands session-manager integration
+# (bedrock_agentcore.memory.integrations.strands) used by notes_agent/memory.py.
+bedrock-agentcore[strands-agents]>=0.1.0

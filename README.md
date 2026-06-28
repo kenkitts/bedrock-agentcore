@@ -87,4 +87,79 @@ cd ../notesAgentRuntime
 ~/bedrock-agentcore/scripts/teardown_02_runtime.sh
 ```
 
+## Post 3 (Memory): remember the conversation, then the user
+
+Same agent, now wired to **AgentCore Memory**. `app.py` builds a per-session
+agent so a conversation survives cold starts (short-term memory) and the agent
+remembers your preferences and facts **across sessions** (long-term memory).
+
+Provision the Memory resource **once**. We use a small SDK script rather than
+`agentcore add memory` because the CLI can't set namespaces, and long-term
+retrieval has to query those exact namespaces:
+
+```bash
+pip install -r requirements.txt
+python scripts/create_memory.py        # prints: NOTES_AGENT_MEMORY_ID=<id>
+```
+
+Record the id so the agent can find it. The AgentCore CLI has no way to inject
+environment variables into the runtime, so paste the id into
+[`notes_agent/config.py`](notes_agent/config.py) (`MEMORY_ID`) — it ships with
+the bundled code. For local runs you can instead export it:
+
+```bash
+export NOTES_AGENT_MEMORY_ID=<id>
+python -m notes_agent.main             # local REPL, memory on
+```
+
+Deploy with the same CLI BYO flow as Post 2 (`--memory none` — we provision and
+wire our own Memory resource in code, so the CLI's managed memory stays off):
+
+```bash
+cd ..
+agentcore create --project-name notesAgentRuntime --no-agent
+cd notesAgentRuntime
+agentcore add agent --name notesAgent --type byo \
+    --framework Strands --model-provider Bedrock --memory none \
+    --code-location ../bedrock-agentcore --entrypoint app.py --language Python
+agentcore deploy -y
+```
+
+**Grant the runtime access to the memory.** Because we deploy with `--memory
+none`, the CLI-generated execution role has *no* Memory permissions — the agent
+will authenticate but every memory call fails with `AccessDeniedException`. BYO
+memory means you grant access too. Attach a least-privilege policy (the five
+actions the session manager calls) scoped to your one memory resource:
+
+```bash
+# role name: see `agentcore status` in the deploy project, or the principal ARN
+# in the AccessDeniedException the agent logs on its first memory call.
+scripts/grant_memory_access.sh <execution-role-name> "$NOTES_AGENT_MEMORY_ID"
+```
+
+The policy itself is in [`scripts/memory-policy.json`](scripts/memory-policy.json).
+IAM propagates in a few seconds; then invoke with a fresh session id.
+
+See it remember across sessions — reuse one session id for a conversation, then
+start a **new** session and watch long-term memory carry over (session ids must
+be 33+ characters):
+
+```bash
+SID=notes-demo-session-0001-aaaaaaaaaaaa
+agentcore invoke --session-id "$SID" "I prefer terse, bullet-point summaries"
+agentcore invoke --session-id "$SID" "the Q3 planning doc is in the shared drive"
+# A brand-new session — short-term context is gone, but long-term memory isn't:
+agentcore invoke --session-id notes-demo-session-0002-bbbbbbbbbbbb \
+    "how do I like my summaries, and where's the Q3 doc?"
+```
+
+Clean up — the Memory resource is billable and retains events until they expire,
+so delete it along with the Runtime (tearing down the Runtime also removes the
+execution role and the inline memory policy you attached above):
+
+```bash
+# from the repo root (deletes the Memory resource, then prints the Runtime step):
+scripts/teardown_03_memory.sh <memory-id>
+```
+
 See [`PLAN.md`](PLAN.md) for the full series design and [`POST_TEMPLATE.md`](POST_TEMPLATE.md) for the post structure.

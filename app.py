@@ -1,17 +1,18 @@
 """AgentCore Runtime entrypoint for the notes agent.
 
-This is the only new code Part 2 needs. It does not change the agent — it
-wraps the *same* ``build_agent()`` from Part 1 in an AgentCore Runtime app so
-the agent can run in the cloud instead of a terminal on your laptop.
+Post 2 introduced this file to host the agent in the cloud. Post 3 (Memory)
+changes one thing: instead of a single module-load agent, we build a
+*session-scoped* agent per invocation, bound to that session's AgentCore
+Memory. Memory is session-specific, so Post 2's "build once and reuse"
+optimization no longer fits — the agent is constructed per request.
 
 ``BedrockAgentCoreApp`` turns the decorated handler into an HTTP server
-(``POST /invocations`` on port 8080) that AgentCore Runtime knows how to host.
-Locally, ``python app.py`` starts that same server so you can test before you
-deploy.
+(``POST /invocations`` on port 8080) that AgentCore Runtime hosts. Locally,
+``python app.py`` starts that same server.
 
-Deploy with the AgentCore CLI (``npm install -g @aws/agentcore``). The CLI is
-project-oriented, so create a sibling deploy project that points back at this
-repo (bring-your-own-code):
+Deploy with the AgentCore CLI (``npm install -g @aws/agentcore``). First
+provision the Memory resource and record its id in notes_agent/config.py
+(see scripts/create_memory.py), then deploy the agent as bring-your-own-code:
 
     cd ..
     agentcore create --project-name notesAgentRuntime --no-agent
@@ -20,31 +21,43 @@ repo (bring-your-own-code):
         --framework Strands --model-provider Bedrock --memory none \
         --code-location ../bedrock-agentcore --entrypoint app.py --language Python
     agentcore deploy -y
-    agentcore invoke "remember that runtime is post 2"
+    # Reuse one session id (33+ chars) to get conversation continuity:
+    agentcore invoke --session-id notes-demo-session-0001-aaaaaaaaaaaa \
+        "remember I like terse, bullet-point summaries"
+
+(``--memory none`` refers to the CLI's managed-memory option; we provision and
+wire our own Memory resource in code, so we leave the CLI's off.)
 """
+
+import uuid
 
 from bedrock_agentcore import BedrockAgentCoreApp
 
 from notes_agent.agent import build_agent
+from notes_agent.memory import build_session_manager
 
 app = BedrockAgentCoreApp()
 
-# Build the agent once at module load so warm invocations reuse it instead of
-# reconstructing the model client on every request.
-agent = build_agent()
-
 
 @app.entrypoint
-def invoke(payload: dict) -> dict:
-    """Handle one Runtime invocation.
+def invoke(payload: dict, context) -> dict:
+    """Handle one Runtime invocation, scoped to its session's memory.
 
-    AgentCore delivers the request body as ``payload``. We pull the user's
-    prompt out, run the agent loop, and return the final text. (You could
-    instead make this ``async`` and ``yield`` from ``agent.stream_async`` to
-    stream tokens back — we keep it synchronous here to stay focused on
-    hosting, not streaming.)
+    AgentCore passes the request body as ``payload`` and request metadata as
+    ``context``. We use ``context.session_id`` (the Runtime session, from the
+    X-Amzn-Bedrock-AgentCore-Runtime-Session-Id header) as the memory session
+    id so conversation memory lines up with the Runtime session. A plain local
+    curl has no session header, so we fall back to a random id.
     """
     prompt = payload.get("prompt", "")
+    session_id = getattr(context, "session_id", None) or uuid.uuid4().hex
+    actor_id = payload.get("actor_id")  # optional; defaults to config.ACTOR_ID
+
+    # build_session_manager returns None when no MEMORY_ID is configured, so
+    # this gracefully degrades to the memoryless Post 2 agent.
+    session_manager = build_session_manager(session_id=session_id, actor_id=actor_id)
+    agent = build_agent(session_manager=session_manager)
+
     result = agent(prompt)
     return {"result": str(result)}
 

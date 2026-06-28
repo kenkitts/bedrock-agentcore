@@ -105,6 +105,14 @@ Every post follows this 9-part anatomy:
   `_STORE` (application data) becoming durable behind a real API is **Post 4 (Gateway)**, not here.
   Don't imply Post 3 fixes the disappearing notes — it fixes the disappearing *conversation*.
 
+- **The BYO-memory scar (a teaching beat, like Post 2's flatten):** deploying with `--memory none`
+  (so we can own namespaces via the SDK) means the CLI-generated execution role has **no** Memory
+  permissions. The agent authenticates but the first memory call dies with `AccessDeniedException`.
+  Lesson: *BYO resource means BYO permissions.* The fix is a least-privilege inline policy scoped to
+  the one memory ARN (`scripts/memory-policy.json` / `scripts/grant_memory_access.sh`) granting the
+  five data-plane actions the session manager calls: `CreateEvent`, `GetEvent`, `DeleteEvent`,
+  `ListEvents`, `RetrieveMemoryRecords`. The policy dies with the execution role at teardown.
+
 - **Demo design:** both lessons need ≥2 sessions. Short-term: show retained context across a
   cold start / new session that affinity couldn't cover. Long-term: a brand-new session recalling
   a preference stated in a prior one. Plan the transcript around two sessions.
