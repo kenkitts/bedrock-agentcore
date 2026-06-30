@@ -26,7 +26,10 @@ SYSTEM_PROMPT = (
 )
 
 
-def build_agent(session_manager: Optional[Any] = None) -> Agent:
+def build_agent(
+    session_manager: Optional[Any] = None,
+    tools: Optional[list] = None,
+) -> Agent:
     """Construct the notes agent.
 
     The model id and region come from ``config.py`` so a reader can swap them
@@ -38,12 +41,16 @@ def build_agent(session_manager: Optional[Any] = None) -> Agent:
 
     ``session_manager`` (Post 3) wires the agent to AgentCore Memory. It is
     optional: pass ``None`` (the default) for the memoryless Posts 1-2 agent.
+
+    ``tools`` (Post 4) lets callers pass tools discovered over the AgentCore
+    Gateway (MCP). When omitted, the agent uses the in-process ``NOTE_TOOLS``
+    from Post 1, so it still runs with no gateway configured.
     """
     model = BedrockModel(model_id=MODEL_ID, region_name=REGION)
     kwargs = {
         "model": model,
         "system_prompt": SYSTEM_PROMPT,
-        "tools": NOTE_TOOLS,
+        "tools": tools if tools is not None else NOTE_TOOLS,
         "callback_handler": None,
     }
     if session_manager is not None:

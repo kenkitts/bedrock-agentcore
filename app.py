@@ -34,6 +34,7 @@ import uuid
 from bedrock_agentcore import BedrockAgentCoreApp
 
 from notes_agent.agent import build_agent
+from notes_agent.gateway import build_gateway_client, list_gateway_tools
 from notes_agent.memory import build_session_manager
 
 app = BedrockAgentCoreApp()
@@ -56,10 +57,21 @@ def invoke(payload: dict, context) -> dict:
     # build_session_manager returns None when no MEMORY_ID is configured, so
     # this gracefully degrades to the memoryless Post 2 agent.
     session_manager = build_session_manager(session_id=session_id, actor_id=actor_id)
-    agent = build_agent(session_manager=session_manager)
 
-    result = agent(prompt)
-    return {"result": str(result)}
+    # build_gateway_client returns None when no GATEWAY_URL is configured, so
+    # the agent falls back to the in-process Post 1 tools.
+    mcp_client = build_gateway_client()
+    if mcp_client is None:
+        agent = build_agent(session_manager=session_manager)
+        return {"result": str(agent(prompt))}
+
+    # Gateway configured: tools are discovered over MCP, and the connection has
+    # to stay open while the agent runs - so we build and call the agent inside
+    # the `with` block.
+    with mcp_client:
+        tools = list_gateway_tools(mcp_client)
+        agent = build_agent(session_manager=session_manager, tools=tools)
+        return {"result": str(agent(prompt))}
 
 
 if __name__ == "__main__":

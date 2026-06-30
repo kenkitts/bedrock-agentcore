@@ -13,3 +13,8 @@ boto3>=1.35.0
 # pulls in the AgentCore Memory <-> Strands session-manager integration
 # (bedrock_agentcore.memory.integrations.strands) used by notes_agent/memory.py.
 bedrock-agentcore[strands-agents]>=0.1.0
+
+# MCP client (Post 4). Strands' MCPClient speaks MCP over streamable HTTP to the
+# AgentCore Gateway endpoint, where the notes tools now live. Only needed when
+# GATEWAY_URL is set; the package still imports without a gateway configured.
+mcp>=1.0.0

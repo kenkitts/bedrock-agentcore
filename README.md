@@ -162,4 +162,82 @@ execution role and the inline memory policy you attached above):
 scripts/teardown_03_memory.sh <memory-id>
 ```
 
+## Post 4 (Gateway): real tools behind an MCP endpoint
+
+The notes finally get a durable home. Instead of an in-process Python list,
+`add_note` / `list_notes` / `search_notes` are backed by a **DynamoDB table**
+behind a **Lambda**, exposed to the agent as **MCP tools** through an
+**AgentCore Gateway**. The agent discovers its tools over the network and can't
+tell them from local ones.
+
+Provision the backend **once** (DynamoDB table + Lambda + a least-privilege
+execution role). We use a small SDK script rather than the CLI because we own
+the Lambda's data-plane permissions:
+
+```bash
+pip install -r requirements.txt
+python scripts/create_notes_backend.py   # prints NOTES_AGENT_BACKEND_LAMBDA_ARN=<arn>
+```
+
+Deploy the agent with the same BYO flow as Posts 2-3, then attach a gateway and
+register the Lambda as a target with our tool schema:
+
+```bash
+cd ..
+agentcore create --project-name notesAgentRuntime --no-agent
+cd notesAgentRuntime
+agentcore add agent --name notesAgent --type byo \
+    --framework Strands --model-provider Bedrock --memory none \
+    --code-location ../bedrock-agentcore --entrypoint app.py --language Python
+
+# A gateway with NONE inbound auth (see the security note below), wired to the agent.
+agentcore add gateway --name NotesGateway --authorizer-type NONE --runtimes notesAgent
+
+# The Lambda target + the tool schema the model reads.
+agentcore add gateway-target --name NotesTarget --type lambda-function-arn \
+    --lambda-arn <NOTES_AGENT_BACKEND_LAMBDA_ARN> \
+    --tool-schema-file ../bedrock-agentcore/scripts/notes_backend/tools.json \
+    --gateway NotesGateway
+
+agentcore deploy -y
+agentcore status          # copy the Gateway URL
+```
+
+**Record the Gateway URL so the agent can find it.** Like the Memory id, the
+CLI can't inject env vars into the runtime, so paste the URL into
+[`notes_agent/config.py`](notes_agent/config.py) (`GATEWAY_URL`) and
+`agentcore deploy -y` once more so it ships with the bundled code. (Two-phase by
+nature: the gateway doesn't exist until the first deploy.) The MCP endpoint is
+the gateway host plus a `/mcp` path — `agentcore status` prints the host, and
+the bare host answers with an AgentCore envelope instead of MCP, so the code
+appends `/mcp` for you if you forget it. For local runs you can instead export
+it:
+
+```bash
+export NOTES_AGENT_GATEWAY_URL=<gateway-url>
+python -m notes_agent.main          # local REPL, tools served by the gateway
+```
+
+> **Security note (paid off in Post 5).** `--authorizer-type NONE` means the
+> gateway endpoint is **unauthenticated** — anyone with the URL can list and
+> call your tools. That's a deliberate liability to keep this post focused on
+> tools/MCP; **Post 5 (Identity)** locks it down with inbound auth and adds
+> per-user scoping ("your notes vs. someone else's").
+
+Tests start here — run the deterministic backend unit tests (no AWS):
+
+```bash
+pip install pytest
+pytest
+```
+
+Clean up — Post 4 adds a DynamoDB table, a Lambda, and a role on top of the
+Runtime/Memory:
+
+```bash
+# from the repo root (deletes the table, Lambda, and role, then prints the
+# Gateway + Runtime teardown steps):
+scripts/teardown_04_gateway.sh
+```
+
 See [`PLAN.md`](PLAN.md) for the full series design and [`POST_TEMPLATE.md`](POST_TEMPLATE.md) for the post structure.

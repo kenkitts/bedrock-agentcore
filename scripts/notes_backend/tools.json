@@ -1,0 +1,38 @@
+[
+  {
+    "name": "add_note",
+    "description": "Save a note for the user. Call this whenever the user shares something they want to remember or asks you to write something down.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "The note content to store, in the user's own words."
+        }
+      },
+      "required": ["text"]
+    }
+  },
+  {
+    "name": "list_notes",
+    "description": "List every note the user has saved, oldest first. Takes no arguments.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "search_notes",
+    "description": "Find saved notes whose text contains the given query. Use this to answer questions about what the user has previously saved.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Text to search for within saved notes."
+        }
+      },
+      "required": ["query"]
+    }
+  }
+]

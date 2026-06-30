@@ -37,3 +37,16 @@ MEMORY_ID = os.environ.get("NOTES_AGENT_MEMORY_ID", "")
 # Who the long-term memories belong to. Real per-user identity arrives in
 # Post 5 (Identity); until then a single demo actor scopes all memory.
 ACTOR_ID = os.environ.get("NOTES_AGENT_ACTOR_ID", "demo-user")
+
+
+# --- Post 4 (Gateway) ------------------------------------------------------
+
+# AgentCore Gateway MCP endpoint. Create the gateway with the AgentCore CLI
+# (see README), then read its URL from `agentcore status` and paste it here as
+# the default (it ships with the bundled code into the Runtime container, since
+# the CLI has no way to inject env vars - same constraint as MEMORY_ID).
+# For local runs you can instead export NOTES_AGENT_GATEWAY_URL.
+# The MCP endpoint is the gateway host plus a `/mcp` path; if you paste just the
+# host, gateway.py appends `/mcp` for you.
+# Leave empty to fall back to the in-process Post 1 tools (no gateway needed).
+GATEWAY_URL = os.environ.get("NOTES_AGENT_GATEWAY_URL", "")
