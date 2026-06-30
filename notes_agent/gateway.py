@@ -27,9 +27,10 @@ from notes_agent.config import GATEWAY_URL
 def _mcp_endpoint(url: str) -> str:
     """Ensure the gateway URL points at the MCP endpoint (``.../mcp``).
 
-    ``agentcore status`` reports the gateway *host* without the ``/mcp`` path.
-    A bare host answers MCP requests with an AgentCore service envelope rather
-    than JSON-RPC, which Strands surfaces as an opaque "client initialization
+    ``agentcore status --json`` reports the gateway *host* without the ``/mcp``
+    path (the plain ``agentcore status`` doesn't show the URL at all). A bare
+    host answers MCP requests with an AgentCore service envelope rather than
+    JSON-RPC, which Strands surfaces as an opaque "client initialization
     failed" error - hard to diagnose. Normalizing here means pasting either the
     host or the full ``/mcp`` URL into GATEWAY_URL both work.
     """

@@ -200,7 +200,7 @@ agentcore add gateway-target --name NotesTarget --type lambda-function-arn \
     --gateway NotesGateway
 
 agentcore deploy -y
-agentcore status          # copy the Gateway URL
+agentcore status --json   # the Gateway URL lives in the JSON, not the plain output
 ```
 
 **Record the Gateway URL so the agent can find it.** Like the Memory id, the
@@ -208,10 +208,10 @@ CLI can't inject env vars into the runtime, so paste the URL into
 [`notes_agent/config.py`](notes_agent/config.py) (`GATEWAY_URL`) and
 `agentcore deploy -y` once more so it ships with the bundled code. (Two-phase by
 nature: the gateway doesn't exist until the first deploy.) The MCP endpoint is
-the gateway host plus a `/mcp` path — `agentcore status` prints the host, and
-the bare host answers with an AgentCore envelope instead of MCP, so the code
-appends `/mcp` for you if you forget it. For local runs you can instead export
-it:
+the gateway host plus a `/mcp` path — `agentcore status --json` prints the host
+(the plain `agentcore status` doesn't show the URL), and the bare host answers
+with an AgentCore envelope instead of MCP, so the code appends `/mcp` for you if
+you forget it. For local runs you can instead export it:
 
 ```bash
 export NOTES_AGENT_GATEWAY_URL=<gateway-url>
