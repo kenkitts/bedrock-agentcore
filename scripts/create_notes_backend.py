@@ -70,18 +70,38 @@ def log(msg: str) -> None:
 
 
 def ensure_table(ddb) -> str:
-    """Create the notes table if absent; return its ARN."""
+    """Create the notes table if absent; return its ARN.
+
+    Post 5: the table uses a composite key (user_id partition key, note_id sort
+    key) for per-user isolation. If the old Post 4 table exists with the wrong
+    schema, delete and recreate it.
+    """
     existing = ddb.meta.client.list_tables()["TableNames"]
     if TABLE_NAME in existing:
-        log(f"Table {TABLE_NAME!r} already exists.")
-        return ddb.Table(TABLE_NAME).table_arn
+        # Check if it has the right schema (composite key).
+        table = ddb.Table(TABLE_NAME)
+        table.load()
+        key_attrs = {ks["AttributeName"] for ks in table.key_schema}
+        if "user_id" in key_attrs and "note_id" in key_attrs:
+            log(f"Table {TABLE_NAME!r} already exists with correct schema.")
+            return table.table_arn
+        # Old schema (Post 4: single 'id' hash key). Delete and recreate.
+        log(f"Table {TABLE_NAME!r} has old schema; deleting and recreating...")
+        table.delete()
+        table.wait_until_not_exists()
 
-    log(f"Creating DynamoDB table {TABLE_NAME!r} (on-demand)...")
+    log(f"Creating DynamoDB table {TABLE_NAME!r} (on-demand, composite key)...")
     table = ddb.create_table(
         TableName=TABLE_NAME,
         BillingMode="PAY_PER_REQUEST",
-        AttributeDefinitions=[{"AttributeName": "id", "AttributeType": "S"}],
-        KeySchema=[{"AttributeName": "id", "KeyType": "HASH"}],
+        AttributeDefinitions=[
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "note_id", "AttributeType": "S"},
+        ],
+        KeySchema=[
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "note_id", "KeyType": "RANGE"},
+        ],
     )
     table.wait_until_exists()
     return table.table_arn
@@ -90,15 +110,15 @@ def ensure_table(ddb) -> str:
 def ensure_role(iam, table_arn: str) -> str:
     """Create the Lambda execution role if absent; return its ARN.
 
-    Least privilege: basic Lambda logging + exactly the two DynamoDB actions
-    the handler calls (PutItem to save, Scan to list/search), scoped to the one
-    table.
+    Least privilege: basic Lambda logging + exactly the DynamoDB actions the
+    handler calls (PutItem to save, Query to list/search per-user), scoped to
+    the one table.
     """
     try:
         role = iam.create_role(
             RoleName=ROLE_NAME,
             AssumeRolePolicyDocument=json.dumps(LAMBDA_TRUST),
-            Description="Execution role for the notes agent Gateway backend Lambda (blog Post 4).",
+            Description="Execution role for the notes agent Gateway backend Lambda (blog Post 4-5).",
         )
         role_arn = role["Role"]["Arn"]
         log(f"Created role {ROLE_NAME!r}.")
@@ -119,7 +139,7 @@ def ensure_role(iam, table_arn: str) -> str:
                 "Statement": [
                     {
                         "Effect": "Allow",
-                        "Action": ["dynamodb:PutItem", "dynamodb:Scan"],
+                        "Action": ["dynamodb:PutItem", "dynamodb:Query"],
                         "Resource": table_arn,
                     }
                 ],

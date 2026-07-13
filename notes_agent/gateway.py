@@ -17,6 +17,11 @@ Two things to know about the lifecycle:
 When no gateway is configured (``GATEWAY_URL`` empty), :func:`build_gateway_client`
 returns ``None`` and callers fall back to the local Post 1 tools - so the agent
 still runs offline with no cloud dependency.
+
+Post 5 (Identity): the gateway now requires a valid JWT for inbound auth
+(``--authorizer-type CUSTOM_JWT``). The agent forwards the user's token on the
+MCP connection so the gateway can validate it independently and the interceptor
+can extract user identity for per-user scoping.
 """
 
 from typing import Optional
@@ -38,11 +43,18 @@ def _mcp_endpoint(url: str) -> str:
     return trimmed if trimmed.endswith("/mcp") else trimmed + "/mcp"
 
 
-def build_gateway_client():
+def build_gateway_client(token: Optional[str] = None):
     """Return an MCP client bound to the Gateway, or ``None`` if unconfigured.
 
     Imports are deferred so the package still imports cleanly when the optional
     ``mcp`` dependency isn't installed and no gateway is in use.
+
+    Post 5 (Identity): when ``token`` is provided, it is sent as a Bearer token
+    on the MCP HTTP connection. The Gateway's CUSTOM_JWT authorizer validates it
+    independently, and the interceptor Lambda extracts the user's ``sub`` claim
+    to inject into tool calls. When ``token`` is ``None`` (local REPL, no auth),
+    no Authorization header is sent — works against a NONE-auth gateway or when
+    the gateway is not configured.
     """
     if not GATEWAY_URL:
         return None
@@ -50,10 +62,9 @@ def build_gateway_client():
     from mcp.client.streamable_http import streamablehttp_client
     from strands.tools.mcp.mcp_client import MCPClient
 
-    # NONE inbound auth (Post 4): no token on the request. Post 5 (Identity)
-    # locks this endpoint down - right now anyone with the URL can call it.
     endpoint = _mcp_endpoint(GATEWAY_URL)
-    return MCPClient(lambda: streamablehttp_client(endpoint))
+    headers = {"Authorization": f"Bearer {token}"} if token else None
+    return MCPClient(lambda: streamablehttp_client(endpoint, headers=headers))
 
 
 def list_gateway_tools(client) -> list:

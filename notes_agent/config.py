@@ -34,9 +34,19 @@ MODEL_ID = os.environ.get(
 # Leave empty to run the memoryless Post 1/2 agent.
 MEMORY_ID = os.environ.get("NOTES_AGENT_MEMORY_ID", "")
 
-# Who the long-term memories belong to. Real per-user identity arrives in
-# Post 5 (Identity); until then a single demo actor scopes all memory.
+# Who the long-term memories belong to. In Post 5 (Identity) this is the
+# authenticated user's ``sub`` claim from the JWT. For local runs and earlier
+# posts without authentication, falls back to a configurable default.
 ACTOR_ID = os.environ.get("NOTES_AGENT_ACTOR_ID", "demo-user")
+
+
+# --- Post 5 (Identity) ------------------------------------------------------
+
+# Header name where the Gateway-validated JWT identity is available. The
+# Runtime makes inbound request headers available via context.request_headers;
+# after JWT validation the original Authorization header is preserved so the
+# agent can decode claims without re-verifying the signature.
+IDENTITY_HEADER = "Authorization"
 
 
 # --- Post 4 (Gateway) ------------------------------------------------------

@@ -29,6 +29,7 @@ SYSTEM_PROMPT = (
 def build_agent(
     session_manager: Optional[Any] = None,
     tools: Optional[list] = None,
+    system_prompt: Optional[str] = None,
 ) -> Agent:
     """Construct the notes agent.
 
@@ -45,11 +46,15 @@ def build_agent(
     ``tools`` (Post 4) lets callers pass tools discovered over the AgentCore
     Gateway (MCP). When omitted, the agent uses the in-process ``NOTE_TOOLS``
     from Post 1, so it still runs with no gateway configured.
+
+    ``system_prompt`` (Post 5) allows callers to inject identity context (e.g.
+    "The authenticated user is alice.") into the prompt. When omitted, uses the
+    default SYSTEM_PROMPT.
     """
     model = BedrockModel(model_id=MODEL_ID, region_name=REGION)
     kwargs = {
         "model": model,
-        "system_prompt": SYSTEM_PROMPT,
+        "system_prompt": system_prompt or SYSTEM_PROMPT,
         "tools": tools if tools is not None else NOTE_TOOLS,
         "callback_handler": None,
     }

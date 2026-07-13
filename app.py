@@ -1,76 +1,110 @@
 """AgentCore Runtime entrypoint for the notes agent.
 
 Post 2 introduced this file to host the agent in the cloud. Post 3 (Memory)
-changes one thing: instead of a single module-load agent, we build a
-*session-scoped* agent per invocation, bound to that session's AgentCore
-Memory. Memory is session-specific, so Post 2's "build once and reuse"
-optimization no longer fits — the agent is constructed per request.
+builds a session-scoped agent per invocation, bound to that session's AgentCore
+Memory. Post 4 (Gateway) adds MCP tool discovery.
+
+Post 5 (Identity) adds inbound authentication and per-user scoping:
+
+* The Runtime is configured in JWT mode — it validates the user's Cognito token
+  before the handler runs. The validated JWT is available in
+  ``context.request_headers["Authorization"]``.
+* The handler decodes the JWT (signature already verified by the Runtime) to
+  extract the ``sub`` claim, which becomes:
+  - the ``actor_id`` for Memory (per-user long-term memory),
+  - context in the system prompt ("The authenticated user is ..."),
+  - the Bearer token forwarded to the Gateway (so the Gateway validates it
+    independently and the interceptor can inject identity into tool calls).
 
 ``BedrockAgentCoreApp`` turns the decorated handler into an HTTP server
-(``POST /invocations`` on port 8080) that AgentCore Runtime hosts. Locally,
-``python app.py`` starts that same server.
+(``POST /invocations`` on port 8080) that AgentCore Runtime hosts.
 
-Deploy with the AgentCore CLI (``npm install -g @aws/agentcore``). First
-provision the Memory resource and record its id in notes_agent/config.py
-(see scripts/create_memory.py), then deploy the agent as bring-your-own-code:
-
-    cd ..
-    agentcore create --project-name notesAgentRuntime --no-agent
-    cd notesAgentRuntime
-    agentcore add agent --name notesAgent --type byo \
-        --framework Strands --model-provider Bedrock --memory none \
-        --code-location ../bedrock-agentcore --entrypoint app.py --language Python
-    agentcore deploy -y
-    # Reuse one session id (33+ chars) to get conversation continuity:
-    agentcore invoke --session-id notes-demo-session-0001-aaaaaaaaaaaa \
-        "remember I like terse, bullet-point summaries"
-
-(``--memory none`` refers to the CLI's managed-memory option; we provision and
-wire our own Memory resource in code, so we leave the CLI's off.)
+Deploy with the AgentCore CLI. Post 5 switches the Runtime to JWT auth mode
+and the Gateway to CUSTOM_JWT (see README for the full deploy commands).
 """
 
 import uuid
 
+import jwt as pyjwt
 from bedrock_agentcore import BedrockAgentCoreApp
 
-from notes_agent.agent import build_agent
+from notes_agent.agent import build_agent, SYSTEM_PROMPT
+from notes_agent.config import IDENTITY_HEADER
 from notes_agent.gateway import build_gateway_client, list_gateway_tools
 from notes_agent.memory import build_session_manager
 
 app = BedrockAgentCoreApp()
 
 
+def _extract_user_id(context) -> tuple[str, str]:
+    """Extract the user's identity from the Runtime-validated JWT.
+
+    Returns (user_id, raw_token). The Runtime has already validated the
+    signature, so we decode without verification to read claims.
+
+    Falls back to ("", "") when no valid JWT is present (e.g., local testing
+    without auth, or Posts 1-4 mode).
+    """
+    try:
+        headers = context.request_headers or {}
+        auth_header = headers.get(IDENTITY_HEADER, "") or headers.get(
+            IDENTITY_HEADER.lower(), ""
+        )
+        if auth_header.startswith("Bearer "):
+            token = auth_header[len("Bearer "):]
+            claims = pyjwt.decode(token, options={"verify_signature": False})
+            sub = claims.get("sub", "")
+            if sub:
+                return sub, token
+    except Exception:
+        pass
+    return "", ""
+
+
 @app.entrypoint
 def invoke(payload: dict, context) -> dict:
-    """Handle one Runtime invocation, scoped to its session's memory.
+    """Handle one Runtime invocation with per-user identity scoping.
 
-    AgentCore passes the request body as ``payload`` and request metadata as
-    ``context``. We use ``context.session_id`` (the Runtime session, from the
-    X-Amzn-Bedrock-AgentCore-Runtime-Session-Id header) as the memory session
-    id so conversation memory lines up with the Runtime session. A plain local
-    curl has no session header, so we fall back to a random id.
+    The JWT authorizer validates the token before this handler runs. We
+    extract the ``sub`` claim to scope memory and tool calls per-user.
     """
     prompt = payload.get("prompt", "")
     session_id = getattr(context, "session_id", None) or uuid.uuid4().hex
-    actor_id = payload.get("actor_id")  # optional; defaults to config.ACTOR_ID
 
-    # build_session_manager returns None when no MEMORY_ID is configured, so
-    # this gracefully degrades to the memoryless Post 2 agent.
+    # --- Identity (Post 5) -------------------------------------------------
+    user_id, raw_token = _extract_user_id(context)
+
+    # Use the authenticated user as the memory actor. Falls back to the
+    # config default ("demo-user") when no identity is present, preserving
+    # backward compatibility with Posts 1-4.
+    actor_id = user_id or payload.get("actor_id") or None
+
+    # --- Memory (Post 3) ---------------------------------------------------
     session_manager = build_session_manager(session_id=session_id, actor_id=actor_id)
 
-    # build_gateway_client returns None when no GATEWAY_URL is configured, so
-    # the agent falls back to the in-process Post 1 tools.
-    mcp_client = build_gateway_client()
+    # --- System prompt with identity context (Post 5) ----------------------
+    system_prompt = SYSTEM_PROMPT
+    if user_id:
+        system_prompt += f"\n\nThe authenticated user is {user_id}."
+
+    # --- Tools via Gateway (Post 4) ----------------------------------------
+    # Forward the user's JWT so the Gateway validates it independently and the
+    # interceptor can extract identity for per-user tool scoping.
+    mcp_client = build_gateway_client(token=raw_token or None)
     if mcp_client is None:
-        agent = build_agent(session_manager=session_manager)
+        agent = build_agent(
+            session_manager=session_manager,
+            system_prompt=system_prompt,
+        )
         return {"result": str(agent(prompt))}
 
-    # Gateway configured: tools are discovered over MCP, and the connection has
-    # to stay open while the agent runs - so we build and call the agent inside
-    # the `with` block.
     with mcp_client:
         tools = list_gateway_tools(mcp_client)
-        agent = build_agent(session_manager=session_manager, tools=tools)
+        agent = build_agent(
+            session_manager=session_manager,
+            tools=tools,
+            system_prompt=system_prompt,
+        )
         return {"result": str(agent(prompt))}
 
 

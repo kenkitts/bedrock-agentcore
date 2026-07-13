@@ -131,10 +131,123 @@ Every post follows this 9-part anatomy:
 - **Tests start here:** unit-test the deterministic notes/bookmarks tool functions and parsing.
 
 ### Post 5 — Identity: Who's Asking?
-- **Primitive:** AgentCore Identity.
-- **Agent gains:** per-user scoping — "your notes vs. someone else's"; inbound auth.
-- **Learning objective:** agent identity, scoped access, governed tool calls.
-- **Load-bearing section:** *Concept* + *Under the hood*.
+- **Primitive:** AgentCore Identity (inbound JWT auth on Runtime + Gateway).
+- **Agent gains:** per-user scoping — "your notes vs. someone else's"; inbound auth locks down
+  the unauthenticated endpoints from Post 4.
+- **Learning objective:** agent identity, scoped access, governed tool calls. The agent doesn't
+  know or care what IdP is behind the auth — it reads a header. Infrastructure handles enforcement.
+- **Load-bearing section:** *Concept* (identity flows through trusted channels, never the LLM) +
+  *Under the hood* (interceptor pattern, DynamoDB composite key).
+- **Tests:** extend `test_notes_backend.py` with per-user isolation assertions.
+
+- **IdP choice: Amazon Cognito.** Stays in-ecosystem, free tier covers demo scale, no third-party
+  signup. The Gateway's CUSTOM_JWT authorizer validates Cognito tokens natively via the OIDC
+  discovery URL.
+
+- **Architecture (end-to-end flow):**
+  ```
+  User → get_token.py alice → Cognito access token (has client_id + sub claims)
+       → agentcore invoke --bearer-token $TOKEN "add a note"
+       → Runtime (CUSTOM_JWT mode, validates token, exposes in context.request_headers)
+       → app.py decodes JWT (verify_signature=False, already validated) → sub
+           → actor_id for Memory (per-user long-term memory)
+           → system prompt: "The authenticated user is alice."
+           → MCPClient forwards same Bearer token to Gateway
+               → Gateway (CUSTOM_JWT, validates independently)
+               → Interceptor Lambda (extracts sub, injects __authContext into tool args)
+               → Notes Lambda (reads user_id from __authContext, queries alice's DDB partition)
+  ```
+
+- **Key decisions:**
+  - **Auth flow:** `AdminInitiateAuth` (USER_PASSWORD_AUTH) for zero-friction scripted tokens.
+    `scripts/get_token.py alice` — one command, no browser.
+  - **Runtime auth:** `--authorizer-type CUSTOM_JWT` with `--allowed-clients` (NOT
+    `--allowed-audience` — Cognito access tokens use `client_id`, not `aud`).
+  - **Gateway auth:** same `CUSTOM_JWT` + `--allowed-clients` on the Gateway.
+  - **Identity to agent:** JWT forwarded via `--request-header-allowlist "Authorization"`;
+    `app.py` decodes with PyJWT (no verification, Runtime already validated).
+  - **Identity to tools:** REQUEST interceptor Lambda (`passRequestHeaders: true`) decodes
+    JWT, injects `{"__authContext": {"userAlias": sub}}` into tool arguments. This is a
+    **trusted channel the model never touches** — tool schemas are unchanged.
+  - **DynamoDB:** composite key (`user_id` PK + `note_id` SK). Query replaces Scan.
+  - **Memory:** `actor_id` = authenticated `sub` (was hardcoded "demo-user").
+  - **Local REPL:** `NOTES_AGENT_USER_ID` env var for identity without JWT.
+
+- **Scars / teaching beats discovered during implementation:**
+
+  1. **The interceptor is mandatory.** The `Authorization` header is RESTRICTED from
+     target allowlisting — it CANNOT be propagated to Lambda targets via
+     `metadataConfiguration.allowedRequestHeaders`. Only an interceptor Lambda can forward it
+     (or extract claims from it). There's no shortcut.
+
+  2. **The CLI doesn't expose interceptor configuration.** No `agentcore add gateway-interceptor`
+     command exists. Interceptors are attached post-deploy via `UpdateGateway` API (boto3). Script:
+     `scripts/attach_interceptor.py`. Teaching beat: "the CLI covers 90% of the surface; for the
+     last 10% you call the SDK."
+
+  3. **The Gateway role ships empty.** The CLI-generated Gateway execution role has ZERO policies.
+     Without `lambda:InvokeFunction` permission, the Gateway silently returns 500 (no Lambda logs
+     created — the invoke never happens). Fix: `aws iam put-role-policy` granting invoke on both
+     the interceptor and notes backend Lambdas. Same "BYO permissions" pattern as Post 3's memory.
+
+  4. **Cognito `aud` vs `client_id`.** Cognito access tokens have `client_id` but NOT `aud`.
+     Using `--allowed-audience` (which checks `aud`) fails with "Claim 'aud' value mismatch."
+     Fix: use `--allowed-clients` (checks `client_id`). This is a Cognito-specific gotcha vs.
+     other OIDC providers that set `aud`.
+
+  5. **Runtime auth mode is separate from Gateway auth.** The Runtime defaults to SigV4 (IAM).
+     Invoking with `--bearer-token` against a SigV4 Runtime gives "Authorization method mismatch."
+     Must explicitly set `--authorizer-type CUSTOM_JWT` on the agent, with the same
+     discovery URL and allowed-clients as the Gateway.
+
+  6. **Redeploy can reset the interceptor + role policies.** `agentcore deploy -y` may recreate
+     resources, wiping the interceptor attachment and inline policies. After any redeploy:
+     re-run `attach_interceptor.py` and re-grant the role policy.
+
+- **Provisioning scripts (run once):**
+  - `scripts/create_cognito.py` — User Pool + App Client + alice/bob
+  - `scripts/create_interceptor.py` — interceptor Lambda + IAM role
+  - `scripts/create_notes_backend.py` — updated DDB table (composite key) + notes Lambda
+  - `scripts/attach_interceptor.py` — wires interceptor to Gateway post-deploy
+  - `scripts/get_token.py <alice|bob>` — mints tokens (run repeatedly, tokens expire in 1h)
+
+- **Deploy commands:**
+  ```bash
+  agentcore add agent --name notesAgent --type byo \
+      --framework Strands --model-provider Bedrock --memory none \
+      --code-location ../bedrock-agentcore --entrypoint app.py --language Python \
+      --authorizer-type CUSTOM_JWT \
+      --discovery-url "$NOTES_AGENT_COGNITO_DISCOVERY_URL" \
+      --allowed-clients "$NOTES_AGENT_COGNITO_CLIENT_ID" \
+      --request-header-allowlist "Authorization"
+
+  agentcore add gateway --name NotesGateway \
+      --authorizer-type CUSTOM_JWT \
+      --discovery-url "$NOTES_AGENT_COGNITO_DISCOVERY_URL" \
+      --allowed-clients "$NOTES_AGENT_COGNITO_CLIENT_ID" \
+      --runtimes notesAgent
+
+  agentcore add gateway-target --name NotesTarget --type lambda-function-arn \
+      --lambda-arn "$NOTES_AGENT_BACKEND_LAMBDA_ARN" \
+      --tool-schema-file ../bedrock-agentcore/scripts/notes_backend/tools.json \
+      --gateway NotesGateway
+
+  agentcore deploy -y
+
+  # Post-deploy: attach interceptor + grant Gateway role permissions
+  python scripts/attach_interceptor.py "$GATEWAY_ID" "$NOTES_AGENT_INTERCEPTOR_LAMBDA_ARN"
+  aws iam put-role-policy --role-name <gateway-role> --policy-name GatewayInvokeLambdas \
+      --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"lambda:InvokeFunction","Resource":["<interceptor-arn>","<backend-arn>"]}]}'
+  ```
+
+- **Demo (three beats):**
+  1. Rejected: `agentcore invoke "hello"` → 401/403 (no token)
+  2. Alice: `agentcore invoke --bearer-token "$ALICE_TOKEN" "add a note: meeting at 3pm"` →
+     `list my notes` → sees her note
+  3. Bob: `agentcore invoke --bearer-token "$BOB_TOKEN" "list my notes"` → "No notes yet."
+
+- **Teardown:** `scripts/teardown_05_identity.sh` — deletes Cognito User Pool + interceptor
+  Lambda + role. Prints pointers to Post 4/3/2 teardown scripts.
 
 ### Post 6 — Built-in Tools: Code Interpreter + Browser
 - **Primitive:** AgentCore Code Interpreter + Browser.

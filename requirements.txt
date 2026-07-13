@@ -18,3 +18,8 @@ bedrock-agentcore[strands-agents]>=0.1.0
 # AgentCore Gateway endpoint, where the notes tools now live. Only needed when
 # GATEWAY_URL is set; the package still imports without a gateway configured.
 mcp>=1.0.0
+
+# JWT decoding (Post 5). The Runtime validates the JWT's signature; app.py
+# decodes the already-validated token to extract the user's ``sub`` claim for
+# per-user memory and tool scoping. Lightweight — no cryptographic verification.
+PyJWT>=2.8.0
