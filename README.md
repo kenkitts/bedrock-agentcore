@@ -240,4 +240,160 @@ Runtime/Memory:
 scripts/teardown_04_gateway.sh
 ```
 
+## Post 5 (Identity): "your" notes vs. someone else's
+
+Post 4 shipped an unauthenticated Gateway — anyone with the URL could call the
+notes tools. Post 5 locks it down with **AgentCore Identity**: the Runtime and
+Gateway both require a valid JWT, and the authenticated user's `sub` claim
+flows through as `actor_id` for Memory and as per-user scoping for the notes
+backend. The agent doesn't know or care what IdP issued the token — it just
+reads a header; the infrastructure enforces identity.
+
+We use **Amazon Cognito** as the identity provider (in-ecosystem, free tier,
+no third-party signup).
+
+**1. Provision Cognito** (User Pool + App Client + two demo users, `alice` and
+`bob`) — run once:
+
+```bash
+pip install -r requirements.txt
+python scripts/create_cognito.py
+# prints:
+#   NOTES_AGENT_COGNITO_POOL_ID=us-east-1_XXXXXXXXX
+#   NOTES_AGENT_COGNITO_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
+#   NOTES_AGENT_COGNITO_DISCOVERY_URL=https://cognito-idp.us-east-1.amazonaws.com/us-east-1_XXXXXXXXX/.well-known/openid-configuration
+export NOTES_AGENT_COGNITO_POOL_ID=<pool-id>
+export NOTES_AGENT_COGNITO_CLIENT_ID=<client-id>
+export NOTES_AGENT_COGNITO_DISCOVERY_URL=<discovery-url>
+```
+
+**2. Update the notes backend for per-user scoping.** Post 5 changes the
+DynamoDB table to a composite key (`user_id` PK + `note_id` SK) so queries are
+scoped to one user instead of scanning everyone's notes:
+
+```bash
+python scripts/create_notes_backend.py   # idempotent; updates the existing table/Lambda
+```
+
+**3. Deploy the agent and Gateway with JWT auth.** This is the same BYO flow as
+Posts 2-4, but both the agent and the Gateway now take `--authorizer-type
+CUSTOM_JWT` (with `--allowed-clients`, not `--allowed-audience` — Cognito access
+tokens carry `client_id`, not `aud`):
+
+```bash
+cd ..
+agentcore create --project-name notesAgentRuntime --no-agent
+cd notesAgentRuntime
+
+agentcore add agent --name notesAgent --type byo \
+    --framework Strands --model-provider Bedrock --memory none \
+    --code-location ../bedrock-agentcore --entrypoint app.py --language Python \
+    --authorizer-type CUSTOM_JWT \
+    --discovery-url "$NOTES_AGENT_COGNITO_DISCOVERY_URL" \
+    --allowed-clients "$NOTES_AGENT_COGNITO_CLIENT_ID" \
+    --request-header-allowlist "Authorization"
+
+agentcore add gateway --name NotesGateway \
+    --authorizer-type CUSTOM_JWT \
+    --discovery-url "$NOTES_AGENT_COGNITO_DISCOVERY_URL" \
+    --allowed-clients "$NOTES_AGENT_COGNITO_CLIENT_ID" \
+    --runtimes notesAgent
+
+agentcore add gateway-target --name NotesTarget --type lambda-function-arn \
+    --lambda-arn "$NOTES_AGENT_BACKEND_LAMBDA_ARN" \
+    --tool-schema-file ../bedrock-agentcore/scripts/notes_backend/tools.json \
+    --gateway NotesGateway
+
+agentcore deploy -y
+agentcore status --json   # note the gateway id + gateway URL (host)
+```
+
+**4. Paste the Gateway URL into `config.py` — this step is easy to miss but
+required.** Exactly like Post 4: the AgentCore CLI has no way to inject env
+vars into the Runtime container, so the agent can't discover the Gateway URL
+on its own. Take the URL from `agentcore status --json` (run in step 3) and
+paste it into [`notes_agent/config.py`](notes_agent/config.py) (`GATEWAY_URL`),
+then redeploy so it ships with the bundled code:
+
+```bash
+cd ../notesAgentRuntime
+agentcore deploy -y
+```
+
+Without this step the agent falls back to the local Post 1 tools (`GATEWAY_URL`
+empty) even though the Gateway is fully deployed — it will run, but every note
+tool call stays in-process and never reaches the per-user DynamoDB-backed
+backend, so `alice` and `bob` will silently share the same in-memory store
+instead of getting isolated notes.
+
+For local runs you can skip editing `config.py` and export the URL instead:
+
+```bash
+export NOTES_AGENT_GATEWAY_URL=<gateway-url>
+```
+
+**5. Attach the identity interceptor and grant the Gateway invoke permissions.**
+The `Authorization` header can't be forwarded to a Lambda target via the
+Gateway's header allowlist — only an interceptor Lambda can extract claims from
+it. The AgentCore CLI has no flag for this, so it's wired post-deploy via the
+SDK. The CLI-generated Gateway role also ships with zero policies, so grant it
+explicitly (a silent 500 with no Lambda logs is the symptom if you skip this):
+
+```bash
+python scripts/create_interceptor.py
+# prints: NOTES_AGENT_INTERCEPTOR_LAMBDA_ARN=<arn>
+
+python scripts/attach_interceptor.py <gateway-id> <interceptor-lambda-arn>
+
+# gateway-id and gateway-role-name: from `agentcore status --json`
+aws iam put-role-policy --role-name <gateway-role-name> --policy-name GatewayInvokeLambdas \
+    --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"lambda:InvokeFunction","Resource":["<interceptor-arn>","<notes-backend-lambda-arn>"]}]}'
+```
+
+> **Redeploys can reset this.** `agentcore deploy -y` may recreate the Gateway
+> and wipe both the interceptor attachment and the inline role policy above.
+> After any redeploy, re-run `attach_interceptor.py` and re-run the
+> `put-role-policy` command.
+
+**6. Mint tokens and see per-user isolation.** `get_token.py` authenticates a
+demo user against Cognito with zero browser interaction (access tokens expire
+after 1 hour — just re-run it):
+
+```bash
+# Rejected — no token:
+agentcore invoke "hello"        # 401/403
+
+# Alice adds and lists her own notes:
+eval "$(python scripts/get_token.py alice)"
+agentcore invoke --bearer-token "$NOTES_AGENT_TOKEN" "add a note: meeting at 3pm"
+agentcore invoke --bearer-token "$NOTES_AGENT_TOKEN" "list my notes"
+
+# Bob sees his own (empty) list — not Alice's:
+eval "$(python scripts/get_token.py bob)"
+agentcore invoke --bearer-token "$NOTES_AGENT_TOKEN" "list my notes"   # "No notes yet."
+```
+
+For the local REPL without a JWT, set the user id directly (graceful
+degradation — no Cognito round trip needed for local iteration):
+
+```bash
+export NOTES_AGENT_USER_ID=alice
+python -m notes_agent.main
+```
+
+Run the extended per-user isolation tests (no AWS):
+
+```bash
+pytest
+```
+
+Clean up — Post 5 adds a Cognito User Pool, an interceptor Lambda, and its IAM
+role on top of Posts 2-4's resources:
+
+```bash
+# from the repo root (deletes the Cognito pool, interceptor Lambda, and role,
+# then prints the Gateway/Memory/Runtime teardown steps):
+scripts/teardown_05_identity.sh
+```
+
 See [`PLAN.md`](PLAN.md) for the full series design and [`POST_TEMPLATE.md`](POST_TEMPLATE.md) for the post structure.
